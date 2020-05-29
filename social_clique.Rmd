@@ -1,0 +1,271 @@
+---
+title: "Jayson Faulds HW1"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+First we load the required packages, import the data, and separate into two dataframes based on social vs. task
+
+```{r}
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(igraph))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(expm))
+
+# read in the data
+setwd("~/Emory Official Stuff/Social Networks")
+df <- fread('classroom_social_and_task_network.csv', header = TRUE)
+
+# make one df for social, one for task
+df_social_long <- df[, -4]
+df_task_long <- df[, -3]
+```
+
+Using the spread function from the `tidyr` package, we can convert the long-format edge list into wide format, in order to get our data into the format of an adjacency matrix. After spreading the data, we create igraph objects and plot the networks visually.
+
+```{r}
+# turn the dfs from long to wide, turns into adjacency matrix
+df_social_wide <- spread(df_social_long, alter, social_tie)
+df_social_wide <- df_social_wide[, -1]
+df_task_wide <- spread(df_task_long, alter, task_tie)
+df_task_wide <- df_task_wide[, -1]
+
+# creates and plots the igraph object
+social = graph.adjacency(as.matrix(df_social_wide), "directed", weighted = TRUE)
+socialweights <- E(social)$weight
+plot(social, edge.width = socialweights)
+
+task = graph.adjacency(as.matrix(df_task_wide), "directed", weighted = TRUE)
+taskweights <- E(task)$weight
+plot(task, edge.width = taskweights)
+```
+
+For question 1, part a, we calculate the centrality statistics below:
+
+```{r}
+# obtains centrality statistics for social
+(in_social <- degree(social, mode = 'in'))
+(out_social <- degree(social, mode = 'out'))
+(close_social <- closeness(social, mode = 'all'))
+(between_social <- betweenness(social))
+(pagerank_social <- page_rank(social, directed = TRUE))
+
+# obtains centrality statistics for task
+(in_task<- degree(task, mode = 'in'))
+(out_task <- degree(task, mode = 'out'))
+(close_task <- closeness(task, mode = 'all'))
+(between_task <- betweenness(task, directed = TRUE))
+(pagerank_task <- page_rank(task, directed = TRUE))
+```
+
+For part b, we calculate the correlations between the corresponding statistics above. Judging from the returned correlations, we see that the most-correlated measure across social and task ties is the betweenness. One insight we can obtain about the network is through this betweenness correlation. I believe the correlation of 0.75 implies that there are cliques within the classroom, and these cliques involve students who enjoy working together along with spending time with each other. In other words, the cliques are both social and academic simultaneously. Because of the existence of cliques, it makes sense that some members of each clique can act somewhat as bridges to other cliques and/or the rest of the network. This leads to higher betweenness statistics for certain nodes. My assertion is that, because of the high correlation between social betweenness and task betweenness, we have evidence that the "bridge nodes" act as bridges for social and academic purposes. This tells me that cliques are both academic as well as social in nature, as I mentioned above.
+
+```{r}
+# calculates the correlations
+cor(in_social, in_task)
+cor(out_social, out_task)
+cor(close_social, close_task)
+cor(between_social, between_task)
+cor(pagerank_social$vector, pagerank_task$vector)
+```
+
+## Question 2
+
+We begin question 2 by calculating the mean and median for task and social, in order to differentiate between strong and weak ties later.
+
+```{r}
+# calculates mean (after filtering out the zero rows)
+mean_social <- mean(df$social_tie[df$social_tie != 0])
+mean_task <- mean(df$task_tie[df$task_tie != 0])
+
+# calculates median after filtering out the zero rows
+median_social <- median(df$social_tie[df$social_tie != 0])
+median_task <- median(df$task_tie[df$task_tie != 0])
+```
+
+
+I was having trouble with if-else statements, please forgive this obnoxious code. Basically what we did here is make 4 dummy columns; one where social is compared to mean, one where task is compared to mean, one where social is compared to median, one where task is compared to median. Inside each dummy, weak ties are 0.5, strong ties are 1, no ties are 0. We want our final dummy to be a 0.5 if there are zero strong ties and at least one weak tie; we check for this by summing up the two mean columns. If the sum is less than 1, but above 0, we know that there are no strong ties but at least one weak tie. These values get coded as 0.5 (Weak ties), while sums over 1.0 get coded as strong ties.
+
+```{r}
+df$mean_dummy <- 1
+df$mean_dummy[df$social_tie < mean_social] <- 0.5
+df$mean_dummy[df$social_tie == 0] <- 0
+df$mean_dummy2 <- 1
+df$mean_dummy2[df$task_tie < mean_task] <- 0.5
+df$mean_dummy2[df$task_tie == 0] <- 0
+df$median_dummy <- 1
+df$median_dummy[df$social_tie < median_social] <- 0.5
+df$median_dummy[df$social_tie == 0] <- 0
+df$median_dummy2 <- 1
+df$median_dummy2[df$task_tie < median_task] <- 0.5
+df$median_dummy2[df$task_tie == 0] <- 0
+df$tie_strength_mean <- 0
+df$tie_strength_mean[df$mean_dummy + df$mean_dummy2 <= 1.1 & df$mean_dummy + df$mean_dummy2 > 0] <- 0.5
+df$tie_strength_mean[df$mean_dummy == 1 | df$mean_dummy2 == 1] <- 1
+df$tie_strength_median <- 0
+df$tie_strength_median[df$median_dummy + df$median_dummy2 <= 1.1 & df$median_dummy + df$median_dummy2 > 0] <- 0.5
+df$tie_strength_median[df$median_dummy == 1 | df$median_dummy2 == 1] <- 1
+```
+
+Next we build the adjacency matrices for the mean and median splits, visualizing the networks as well. After visualizing the plots, we can look at the connections and try to detect any violation of the Strong Triadic Closure property. To make this process easier, I multiplied the edge width by 5, in order to easily discern strong vs. weak ties. We do see numerous instances of STC being violated, many of which occurring with nodes that appear on opposite sides of the most central node (Node 22). For example, in the first network printed below, we can clearly see nodes 1 and 16 having a strong connection to node 22. But node 1 and 16 do not connect to each other, thus violating STC.
+
+```{r}
+# makes adjacency matrix for the means
+df2a <- df[, c(1, 2, 9)]
+df2a <- spread(df2a, alter, tie_strength_mean)
+df2a <- df2a[, -1]
+
+# makes adjacency matrix for the medians
+df2_med <- df[, c(1, 2, 10)]
+df2_med <- spread(df2_med, alter, tie_strength_median)
+df2_med <- df2_med[, -1]
+
+# builds the igraph object and plots the graph for the means
+social2a <- graph.adjacency(as.matrix(df2a), mode = "undirected", weighted = TRUE)
+plot.igraph(social2a, edge.width=E(social2a)$weight*5) # increases the weights to make strong ties pop out more
+
+# builds the igraph object and plots the graph for the medians
+social2_med <- graph.adjacency(as.matrix(df2_med), mode = "undirected", weighted = TRUE)
+plot(social2_med, edge.width=E(social2_med)$Weight*5)
+```
+
+Next, we calculate the transitivity for the network. Transitivity returns the probability that adjacent nodes of a node have a tie (1 minus this will tell us the proportion that are in violation of the STC). This statistic is not completely accurate, as it does not differentiate between strong and weak ties. In other words, a weak tie and a strong tie could connect 2 nodes to a third node, and this would be included in the transitivity calculation, despite the fact that there is only one strong tie. Our use of transitivity here is saying strong and weak ties constitute an instance of STC that can be broken, which is not entirely correct, as we need two strong ties. This leads to more instances of STC being tested than in actuality, giving us a probability of around 60% violation of the STC property, which is artificially higher than what it should be. 
+
+While we have this issue, we know from the graph itself that in multiple cases STC is violated. You can count at least 15 violations in the first graph alone. As far as insights go, these lack of connections despite a strong mutual friend suggest that these pairing of nodes could become friends in the future. Continuing with our example of nodes 1, 16, and 22, we could expect or predict person 1 and person 16 to become friends and/or working partners at some point during their MBA timeline.
+
+```{r}
+1 - transitivity(social2a) # transitivity for mean
+1 - transitivity(social2_med) # transitivity for median
+```
+
+## Question 3
+
+We start question 3 by constructing two adjacency matrices. The first contains values regarding social ties, including their original weights (i.e. not making dummies), and the second does the same for task ties.
+
+```{r}
+# makes adjacency matrix for social (although its the same as the matrix we made in part 1)
+df3social <- df[, c(1, 2, 3)]
+df3social_mat <- spread(df3social, alter, social_tie)
+df3social_mat <- df3social_mat[, -1]
+
+# makes adjacency matrix for task
+df3task <- df[, c(1, 2, 4)]
+df3task_mat <- spread(df3task, alter, task_tie)
+df3task_mat <- df3task_mat[, -1]
+```
+
+Next, we build the igraph objects.
+
+```{r}
+# makes igraph objects for social and task
+graph3social <- graph.adjacency(as.matrix(df3social_mat), 'directed', weighted = TRUE)
+plot(graph3social)
+graph3task <- graph.adjacency(as.matrix(df3task_mat), 'directed', weighted = TRUE)
+plot(graph3task)
+```
+
+For part a, we calculate the edge betweenness for both types of tie. This will give us two numeric vectors that include a betweenness measure for each edge that exists in our network.
+
+```{r}
+# calculates betweenness for both types of tie
+edge3social <- edge_betweenness(graph3social)
+edge3task <- edge_betweenness(graph3task)
+```
+
+For part b, we attempt to correlate the edge betweenness we just calculated with the original weights from the data. But the question specifies that we use the same definitions for mean and median as referenced in question 2. We begin by gathering the original data, and filtering out the edges that have weight zero (Or in other words the edges that do not exist). Then, we construct dummies that tell us whether an edge is above the mean (Or median) weight or not.
+
+```{r}
+# filters out all nonexistant ties from df, stores in a vector
+social_positives <- df$social_tie[df$social_tie > 0]
+task_positives <- df$task_tie[df$task_tie > 0]
+
+# Converts these numeric vectors into a dummy based on the rules from question 2
+social_positives_dummy <- ifelse(social_positives > mean_social, 1, 0)
+task_positives_dummy <- ifelse(task_positives > mean_task, 1, 0)
+social_positives_dummy2 <- ifelse(social_positives > median_social, 1, 0)
+task_positives_dummy2 <- ifelse(task_positives > median_task, 1, 0)
+```
+
+Finally, we run the correlations as mentioned above. We see that each of the correlations returned are not particularly strong but are all negative. This implies that edges with high betweenness tend to be weaker ties (Although when converting to dummies we toss out the ability to gauge the difference between varying levels of strength--we can only look at differences between above and below average). This makes sense, as those with high betweenness logically might have a lot of connections that are less strong and more paltry. In the conceptualizations I referenced above, I believe there to be social and academic cliques in the program. Those with high betweenness may be able to create good connections with other cliques, but they probably do not have strong ties with those cliques. This makes sense, as you are generally close with your own respective clique and not with another. Under this lens, the negative correlation makes more sense.
+
+```{r}
+# Correlates our edge betweenness for each edge with our dummy 
+cor(edge3social, social_positives_dummy) 
+cor(edge3task, task_positives_dummy)
+cor(edge3social, social_positives_dummy2) 
+cor(edge3task, task_positives_dummy2)
+```
+
+## Question 4
+
+For question 4, for practical purposes, we treat social and task ties as the same. We merge them together in this instance. Thus, we begin by creating a dummy that equals 1 if either a social or a task tie exists, regardless of strength. We then remove node 3, because it is an isolate (Contains no ties) and will complicate our results. After constructing the adjacency matrix, we create the igraph object and plot it. We can see that there are no isolates, as 4 and 8 are separate from the pack but connected to each other.
+
+```{r}
+# makes a dummy that equals 1 if either tie type exists
+df$both_dummy <- ifelse(df$social_tie > 0 | df$task_tie > 0, 1, 0)
+df4 <- df[, c(1, 2, 11)]
+df4 <- df4[df4$ego != 3, ]
+df4 <- df4[df4$alter != 3, ]
+df4_mat <- spread(df4, alter, both_dummy)
+df4_mat <- df4_mat[, -1]
+
+graph4 <- graph.adjacency(as.matrix(df4_mat), mode = 'undirected')
+plot(graph4)
+```
+
+In the code block below, we attempt to find the number of walks that cannot be completed amongst nodes. To do this programmatically, we raise the matrix to a power, which will tell us in each cell the amount of walks of that length that can be completed between two nodes. A value of 0 for a cell indicates that a walk cannot be completed between those two nodes for that length of walk. We thus loop from 1 to 21, raising the matrix to each power, and summing up the matrix recursively. At the end, the number of zeros tell us the amount of nodes pairs that are not connected. In our case, we treated the walk from Node A to Node B as distinct from the walk from Node B to Node A.
+
+```{r}
+n <- 21
+matrices <- 0
+for (i in 1:n){
+  mat <- as.matrix(df4_mat) %^% i
+  matrices <- matrices + mat
+}
+
+df_mat <- as.data.frame(matrices)
+sum(df_mat==0)
+```
+
+## Question 5
+
+We begin question 5 by creating a star network, which we know has a degree centrality of 1. We compute various centrality statistics for this type of network below, seeing if they are the same. It turns out for the star network that each centrality statistic yields a value of 1, which is what we expect. The only centrality we can muster for this type of network is the node in the center, as there are no other edges in the network. Thus, it makes sense for all of these values to be the same and to equal 1, as there is perfect connectivity between the middle node and the remaining nodes.
+
+```{r}
+# function for network centrality calculation
+network_degree = function(DT,n){
+  (max(degree(DT,mode='all'))*n -sum(degree(DT,mode='all')))/(n-1)/(n-2)
+}
+
+# makes a star network for an example of 1 centrality (Lebron/Michael Jordan's number used because number of nodes doesn't matter)
+star <- make_star(23, 'undirected')
+plot.igraph(star)
+network_degree(star, 23)
+
+# uses igraph functions to calculate betweenness and closeness centrality
+centr_clo(star, mode = 'all')[2]
+centr_betw(star, directed = TRUE)[2]
+```
+
+Finally, we manually constructa square network that has no middle. We know that this has a degree centrality of zero. Similar to the above instance, the other centrality statistics also yielded a value of zero.
+
+```{r}
+# makes a square network for an example of zero centrality
+square_df <- data.frame(from = c('A', 'B', 'C', 'D'), to = c('B', 'C', 'D', 'A'))
+square <- graph_from_data_frame(square_df, directed = TRUE)
+plot.igraph(square)
+network_degree(square, 4)
+
+# uses igraph functions to calculate betweenness and closeness centrality
+centr_clo(square, mode = 'all')[2]
+centr_betw(square)[2]
+```
+
+
+
+
